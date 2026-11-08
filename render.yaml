@@ -12,12 +12,15 @@ services:
         value: orlyg@timlul.com
       - key: MAIL_FROM
         value: orlyg@timlul.com
+      # Brevo (חינמי עד 300 מיילים ביום). ל-Gmail: smtp.gmail.com / 465 / true
       - key: SMTP_HOST
-        value: smtp.gmail.com
+        value: smtp-relay.brevo.com
       - key: SMTP_PORT
-        value: "465"
+        value: "587"
+      - key: SMTP_SECURE
+        value: "false"
       - key: SMTP_USER
-        value: orlyg@timlul.com
+        sync: false
       - key: SMTP_PASS
         sync: false
       - key: KEYWORDS

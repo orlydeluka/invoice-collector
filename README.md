@@ -26,15 +26,17 @@
 
 ---
 
-## שלב 1 – סיסמה לשליחת מייל
+## שלב 1 – חשבון לשליחת מייל (Brevo)
 
-השרת שולח את המייל דרך חשבון המייל שלך (SMTP). אם `timlul.com` הוא חשבון Google (Gmail / Workspace):
+השרת שולח את החשבוניות דרך שירות השליחה **Brevo** (חינמי עד 300 מיילים ביום):
 
-1. מפעילים אימות דו-שלבי בחשבון Google (אם עוד לא מופעל).
-2. נכנסים ל-<https://myaccount.google.com/apppasswords>, יוצרים סיסמת אפליקציה בשם `invoice-collector`.
-3. שומרים את 16 התווים – זה `SMTP_PASS`.
+1. נרשמים ב-<https://www.brevo.com>.
+2. **Senders, Domains & Dedicated IPs → Senders → Add a sender**: מוסיפים את `orlyg@timlul.com` ומאשרים עם הקוד שמגיע למייל.
+3. **SMTP & API → SMTP → Generate a new SMTP key**. שומרים:
+   - **Login** (נראה כמו `xxxxxx@smtp-brevo.com`) – זה `SMTP_USER`
+   - **המפתח** – זה `SMTP_PASS`
 
-> אם המייל מתארח אצל ספק אחר (Outlook / ספק אחסון), צריך את כתובת שרת ה-SMTP, הפורט והסיסמה שלו.
+> אפשר גם Gmail / Google Workspace עם [סיסמת אפליקציה](https://myaccount.google.com/apppasswords), אם מנהל הארגון מאפשר: `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=465`, `SMTP_SECURE=true`.
 
 ## שלב 2 – העלאת השרת לאינטרנט
 
@@ -42,7 +44,7 @@
 
 1. נרשמים ל-Render עם חשבון GitHub.
 2. **New → Blueprint** → בוחרים את הריפו `invoice-collector`. Render יקרא את `render.yaml`.
-3. ממלאים `SMTP_PASS` (מהשלב הקודם) ומאשרים.
+3. ממלאים `SMTP_USER` ו-`SMTP_PASS` (מהשלב הקודם) ומאשרים.
 4. אחרי שהשרת עלה:
    - הכתובת שלו מופיעה למעלה, למשל `https://invoice-collector-xxxx.onrender.com`.
    - את `API_TOKEN` שנוצר אוטומטית מעתיקים מלשונית **Environment**.
