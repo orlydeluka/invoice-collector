@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>חשבוניות למייל</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1d2330; --muted:#667085; --accent:#2563eb; --ok:#15803d; --err:#b91c1c; --border:#d9dee7; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12151b; --card:#1b2029; --text:#e6e9ef; --muted:#9aa3b2; --accent:#60a5fa; --ok:#4ade80; --err:#f87171; --border:#2c3340; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui,-apple-system,"Segoe UI",Arial,sans-serif; }
+  main { max-width:520px; margin:0 auto; padding:24px 16px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  p.sub { color:var(--muted); margin:0 0 20px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
+  label { display:block; font-weight:600; margin:12px 0 6px; }
+  textarea, input { width:100%; font:inherit; color:inherit; background:transparent; border:1px solid var(--border); border-radius:8px; padding:10px; }
+  textarea { min-height:120px; direction:ltr; text-align:left; }
+  button { margin-top:16px; width:100%; font:inherit; font-weight:600; color:#fff; background:var(--accent); border:0; border-radius:8px; padding:12px; cursor:pointer; }
+  button:disabled { opacity:.6; }
+  #status { margin-top:14px; white-space:pre-wrap; }
+  .ok { color:var(--ok); } .err { color:var(--err); }
+  details { margin-top:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>חשבוניות למייל</h1>
+  <p class="sub">הדביקי לינק לחשבונית או את כל ההודעה. החשבונית תורד ותישלח כ-PDF למייל.</p>
+  <form class="card" id="f">
+    <label for="text">לינק או הודעה</label>
+    <textarea id="text" required placeholder="https://..."></textarea>
+    <details id="tokbox">
+      <summary>טוקן גישה</summary>
+      <input id="token" type="password" autocomplete="off" placeholder="API_TOKEN">
+    </details>
+    <button id="btn">שליחה למייל</button>
+    <div id="status" role="status"></div>
+  </form>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get() { try { return localStorage.getItem('invoiceToken') || ''; } catch { return ''; } },
+    set(v) { try { localStorage.setItem('invoiceToken', v); } catch {} },
+  };
+  $('token').value = store.get();
+  if (!$('token').value) $('tokbox').open = true;
+
+  $('f').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const token = $('token').value.trim();
+    store.set(token);
+    $('btn').disabled = true;
+    $('status').className = '';
+    $('status').textContent = 'מוריד ושולח… (עד דקה)';
+    try {
+      const res = await fetch('/api/invoice', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+        body: JSON.stringify({ text: $('text').value, source: 'manual', wait: true, force: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.status);
+      const lines = data.results.map((r) => (r.ok ? '✓ נשלח: ' + r.filename : '✗ נכשל: ' + r.url + '\n  ' + r.error));
+      $('status').className = data.results.every((r) => r.ok) ? 'ok' : 'err';
+      $('status').textContent = lines.join('\n');
+      if (data.results.every((r) => r.ok)) $('text').value = '';
+    } catch (err) {
+      $('status').className = 'err';
+      $('status').textContent = 'שגיאה: ' + err.message;
+    } finally {
+      $('btn').disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

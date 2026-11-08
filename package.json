@@ -1,0 +1,19 @@
+{
+  "name": "invoice-collector",
+  "version": "1.0.0",
+  "description": "מקבל לינקים לחשבוניות (מ-SMS / ווטסאפ), מוריד אותן כ-PDF ושולח למייל",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "5.1.0",
+    "nodemailer": "7.0.5",
+    "playwright": "1.63.0"
+  }
+}
