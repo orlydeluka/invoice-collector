@@ -24,6 +24,12 @@
   #status { margin-top:14px; white-space:pre-wrap; }
   .ok { color:var(--ok); } .err { color:var(--err); }
   details { margin-top:12px; color:var(--muted); }
+  h2 { font-size:18px; margin:32px 0 4px; }
+  .row { display:flex; gap:8px; align-items:center; margin-top:12px; }
+  .row input[type=checkbox] { width:auto; }
+  button.secondary { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  progress { width:100%; margin-top:12px; }
+  ul.links { max-height:240px; overflow:auto; direction:ltr; text-align:left; font-size:13px; padding-left:18px; color:var(--muted); }
 </style>
 </head>
 <body>
@@ -39,6 +45,24 @@
     </details>
     <button id="btn">שליחה למייל</button>
     <div id="status" role="status"></div>
+  </form>
+
+  <h2>ייבוא חשבוניות מהעבר</h2>
+  <p class="sub">מעלים קבצי ייצוא של צ'אטים מווטסאפ (zip או txt) או ייצוא של הודעות SMS (csv או txt). כל החשבוניות מהתאריך שבוחרים יורדו ויישלחו למייל, ובסוף יגיע מייל סיכום.</p>
+  <form class="card" id="hf">
+    <label for="files">קבצי ייצוא</label>
+    <input id="files" type="file" multiple accept=".zip,.txt,.csv" required>
+    <label for="from">מתאריך</label>
+    <input id="from" type="date" value="2024-01-01" required>
+    <div class="row">
+      <input id="kw" type="checkbox" checked>
+      <label for="kw" style="margin:0;font-weight:400">רק הודעות עם המילים חשבונית / קבלה / invoice / receipt</label>
+    </div>
+    <button type="button" class="secondary" id="check">בדיקה: כמה חשבוניות נמצאו?</button>
+    <button id="hbtn">התחלת ייבוא ושליחה למייל</button>
+    <progress id="prog" hidden></progress>
+    <div id="hstatus" role="status"></div>
+    <ul class="links" id="list" hidden></ul>
   </form>
 </main>
 <script>
@@ -76,6 +100,73 @@
       $('btn').disabled = false;
     }
   });
+
+  // ---- ייבוא היסטוריה ----
+  const auth = () => ({ authorization: 'Bearer ' + $('token').value.trim() });
+  function hset(msg, cls) { $('hstatus').className = cls || ''; $('hstatus').textContent = msg; }
+
+  async function uploadAll() {
+    const token = $('token').value.trim();
+    if (!token) { $('tokbox').open = true; throw new Error('צריך למלא טוקן גישה (למעלה)'); }
+    store.set(token);
+    const batch = crypto.randomUUID();
+    const files = [...$('files').files];
+    for (let i = 0; i < files.length; i++) {
+      hset(`מעלה קובץ ${i + 1} מתוך ${files.length}…`);
+      const res = await fetch('/api/backfill/upload?batch=' + batch, {
+        method: 'POST',
+        headers: { ...auth(), 'content-type': 'application/octet-stream', 'x-filename': encodeURIComponent(files[i].name) },
+        body: files[i],
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.status);
+    }
+    return batch;
+  }
+
+  async function start(dryRun) {
+    if (!$('files').files.length) throw new Error('בחרי קבצים');
+    const batch = await uploadAll();
+    hset('קורא את ההודעות…');
+    const res = await fetch('/api/backfill/start', {
+      method: 'POST',
+      headers: { ...auth(), 'content-type': 'application/json' },
+      body: JSON.stringify({ batch, from: $('from').value, keywordsOnly: $('kw').checked, dryRun }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.status);
+    return data;
+  }
+
+  async function guard(fn) {
+    $('hbtn').disabled = $('check').disabled = true;
+    try { await fn(); } catch (err) { hset('שגיאה: ' + err.message, 'err'); }
+    finally { $('hbtn').disabled = $('check').disabled = false; }
+  }
+
+  $('check').addEventListener('click', () => guard(async () => {
+    const d = await start(true);
+    hset(`נסרקו ${d.messages} הודעות. נמצאו ${d.found} לינקים, מתוכם ${d.alreadySent} כבר נשלחו בעבר.\nיישלחו ${d.links.length} חשבוניות.`, 'ok');
+    $('list').hidden = !d.links.length;
+    $('list').innerHTML = '';
+    for (const l of d.links) { const li = document.createElement('li'); li.textContent = l.date + '  ' + l.url; $('list').appendChild(li); }
+  }));
+
+  $('hf').addEventListener('submit', (e) => { e.preventDefault(); guard(async () => {
+    $('list').hidden = true;
+    let job = await start(false);
+    if (!job.total) { hset('לא נמצאו חשבוניות חדשות לשליחה.', 'ok'); return; }
+    $('prog').hidden = false;
+    $('prog').max = job.total;
+    while (!job.finished) {
+      $('prog').value = job.done;
+      hset(`מעבד ${job.done} מתוך ${job.total} (נשלחו ${job.ok}, נכשלו ${job.failed.length})… אפשר לסגור את הדף, העבודה ממשיכה בשרת.`);
+      await new Promise((r) => setTimeout(r, 4000));
+      const res = await fetch('/api/backfill/' + job.id, { headers: auth() });
+      if (res.ok) job = await res.json();
+    }
+    $('prog').value = job.total;
+    hset(`הסתיים! נשלחו ${job.ok} חשבוניות, ${job.failed.length} נכשלו. מייל סיכום נשלח אלייך.`, 'ok');
+  }); });
 </script>
 </body>
 </html>

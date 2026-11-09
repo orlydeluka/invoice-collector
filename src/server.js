@@ -6,7 +6,8 @@ const crypto = require('node:crypto');
 const express = require('express');
 const { extractUrls, matchesKeywords } = require('./urls');
 const { fetchInvoicePdf, closeBrowser } = require('./fetcher');
-const { sendInvoice, sendFailure } = require('./mailer');
+const { sendInvoice, sendFailure, sendSummary } = require('./mailer');
+const { filesToTexts, collectLinks } = require('./backfill');
 
 const PORT = Number(process.env.PORT || 3000);
 const API_TOKEN = process.env.API_TOKEN;
@@ -47,16 +48,16 @@ function enqueue(job) {
   return p;
 }
 
-async function processUrl(url, { sourceText, source }) {
+async function processUrl(url, { sourceText, source, date, notifyFailure = true }) {
   try {
     const pdf = await fetchInvoicePdf(url);
-    await sendInvoice({ url, pdf, sourceText, source });
+    await sendInvoice({ url, pdf, sourceText, source, date });
     markSeen(url);
     console.log(`נשלח: ${url} (${pdf.method}, ${pdf.buffer.length} bytes)`);
     return { url, ok: true, method: pdf.method, filename: pdf.filename };
   } catch (e) {
     console.error(`נכשל: ${url}:`, e.message);
-    await sendFailure({ url, error: e.message, sourceText }).catch((err) => console.error('גם מייל השגיאה נכשל:', err.message));
+    if (notifyFailure) await sendFailure({ url, error: e.message, sourceText }).catch((err) => console.error('גם מייל השגיאה נכשל:', err.message));
     return { url, ok: false, error: e.message };
   }
 }
@@ -109,6 +110,68 @@ app.post('/api/invoice', async (req, res) => {
     return res.json({ results, duplicates });
   }
   res.status(202).json({ queued: todo.length, urls: todo, duplicates });
+});
+
+// ---- ייבוא היסטוריה ----
+const jobs = new Map();
+const MAX_UPLOAD = 200 * 1024 * 1024;
+const uploads = new Map(); // batchId -> [{ name, buffer }]
+
+const safeDecode = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
+
+// שלב 1: העלאת קבצים (כל קובץ בבקשה נפרדת)
+app.post('/api/backfill/upload', express.raw({ type: '*/*', limit: MAX_UPLOAD }), (req, res) => {
+  if (!authorized(req)) return res.status(401).json({ error: 'טוקן שגוי' });
+  const batch = String(req.query.batch || '');
+  if (!/^[a-z0-9-]{8,64}$/i.test(batch)) return res.status(400).json({ error: 'batch חסר' });
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) return res.status(400).json({ error: 'קובץ ריק' });
+  if (!uploads.has(batch)) uploads.set(batch, []);
+  uploads.get(batch).push({ name: safeDecode(req.get('x-filename') || 'file'), buffer: req.body });
+  res.json({ ok: true });
+});
+
+// שלב 2: התחלת העיבוד
+app.post('/api/backfill/start', (req, res) => {
+  if (!authorized(req)) return res.status(401).json({ error: 'טוקן שגוי' });
+  const { batch, from = '2024-01-01', keywordsOnly = true, dryRun = false } = req.body || {};
+  const files = uploads.get(batch);
+  uploads.delete(batch);
+  if (!files || files.length === 0) return res.status(400).json({ error: 'לא הועלו קבצים' });
+
+  let texts = [];
+  try {
+    for (const f of files) texts = texts.concat(filesToTexts(f.name, f.buffer));
+  } catch (e) {
+    return res.status(400).json({ error: 'לא הצלחתי לקרוא את הקובץ: ' + e.message });
+  }
+  const fromDate = new Date(from + 'T00:00:00Z');
+  const { links, messages } = collectLinks(texts, { from: fromDate, keywords: KEYWORDS, keywordsOnly: keywordsOnly !== false });
+  const todo = links.filter((l) => !wasSeen(l.url));
+  if (dryRun) {
+    return res.json({ messages, found: links.length, alreadySent: links.length - todo.length, links: todo.map((l) => ({ url: l.url, date: l.date.toISOString().slice(0, 10) })) });
+  }
+
+  const id = crypto.randomUUID();
+  const job = { id, total: todo.length, done: 0, ok: 0, failed: [], messages, alreadySent: links.length - todo.length, finished: false };
+  jobs.set(id, job);
+  (async () => {
+    for (const l of todo) {
+      const r = await enqueue(() => processUrl(l.url, { sourceText: l.text, source: 'history', date: l.date, notifyFailure: false }));
+      job.done++;
+      if (r.ok) job.ok++;
+      else job.failed.push({ url: l.url, date: l.date.toISOString().slice(0, 10), error: r.error });
+    }
+    job.finished = true;
+    await sendSummary(job).catch((e) => console.error('מייל סיכום נכשל:', e.message));
+  })();
+  res.status(202).json(job);
+});
+
+app.get('/api/backfill/:id', (req, res) => {
+  if (!authorized(req)) return res.status(401).json({ error: 'טוקן שגוי' });
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'לא נמצא' });
+  res.json(job);
 });
 
 const server = app.listen(PORT, () => console.log(`invoice-collector מאזין על פורט ${PORT}`));
